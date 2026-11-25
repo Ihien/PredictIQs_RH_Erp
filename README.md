@@ -18,6 +18,8 @@ répondre, pièces à l'appui, à un contrôle de l'inspection du travail.
 Au premier lancement réel, l'écran crée le compte administrateur. Ensuite, dans l'ordre :
 
 1. **Paramètres → Entreprise** : raison sociale, IFU, RCCM, n° employeur CNSS, inspection du ressort.
+   **Paramètres → Logo** : PNG ou JPEG (500 Ko max., ~300 px de large) ; il apparaît dans le menu, à la connexion,
+   sur les bulletins, attestations, certificats et tous les états imprimés. Stocké dans la base, donc inclus dans les sauvegardes.
 2. **Paramètres → Paie / Barème IUTS / Droit du travail** : **valider le référentiel légal** (voir § 5).
 3. **Paramètres → Utilisateurs** : un compte nominatif par personne (jamais de compte partagé).
 4. **Employés**, puis pour chacun : contrat, visite médicale d'embauche, pièces du dossier. Pour une reprise en cours
@@ -117,7 +119,7 @@ de base de saisie), pointage horaire.
 erp_rh.py          lancement            erp/paie.py       règles de calcul (fonctions pures)
 erp/core.py        serveur, sécurité    erp/entites.py    formulaires génériques
 erp/schema.py      base + référentiel   erp/rapports.py   conformité, états, dossier inspection
-erp/vues.py        écrans               tests/            12 tests automatiques
+erp/vues.py        écrans               tests/            13 tests automatiques
 ```
 
 ```bash

@@ -158,6 +158,29 @@ class Securite(unittest.TestCase):
         _, _, html = self.login("cible", "Provisoire2026x")
         self.assertIn("verrouillé", html)
 
+    def upload(self, op, csrf, filename, data):
+        b = "----frontiereTest"
+        body = (f'--{b}\r\nContent-Disposition: form-data; name="_csrf"\r\n\r\n{csrf}\r\n'
+                f'--{b}\r\nContent-Disposition: form-data; name="logo"; filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() + data + f"\r\n--{b}--\r\n".encode()
+        rq = urllib.request.Request(self.url + "/admin/logo", body, {"Content-Type": f"multipart/form-data; boundary={b}"})
+        return op.open(rq)
+
+    def test_logo(self):
+        import base64
+        op, csrf, _ = self.login()
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+        r = self.upload(op, csrf, "logo.png", png)
+        self.assertIn("Logo%20enregistr", r.geturl())
+        for path in ("/", "/rapports/registre1", "/paie/1/bulletin/1", "/employes/1/doc/attestation"):
+            self.assertIn('src="data:image/png;base64,', op.open(self.url + path).read().decode(), path)
+        r = self.upload(op, csrf, "faux.png", b"<svg onload=alert(1)></svg>")       # contenu non image refusé
+        self.assertIn("Format%20refus", r.geturl())
+        r = self.upload(op, csrf, "gros.png", png + b"0" * 600_000)                 # trop lourd refusé
+        self.assertIn("trop%20lourd", r.geturl())
+        self.assertIn('src="data:image/png;base64,', op.open(self.url + "/admin/logo").read().decode())   # l'ancien logo est conservé
+        self.post(op, "/admin/logo", _csrf=csrf, action="supprimer")
+        self.assertNotIn('alt="Logo"', op.open(self.url + "/rapports/registre1").read().decode())
+
     def test_conformite_detecte(self):
         c = core.connect()
         msgs = " | ".join(x[2] for x in rapports.controles(c))

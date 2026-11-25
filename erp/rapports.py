@@ -2,7 +2,7 @@
 """Contrôles automatiques de conformité, rapports réglementaires et dossier pour l'inspection du travail."""
 import json, calendar
 import datetime as dt
-from .core import route, page, e, d, fr, money, num, table, csv_resp, params, today, MOIS, get_params
+from .core import route, page, e, d, fr, money, num, table, csv_resp, params, today, MOIS, get_params, logo_img
 from . import paie as M
 from .entites import emp_name, NON_PAYES
 
@@ -446,7 +446,8 @@ def _am(req):
 
 def entete(conn):
     ent = get_params(conn, "entreprise")
-    return (f'<div class="sm"><b>{e(ent.get("raison_sociale") or "Raison sociale à renseigner")}</b> — {e(ent.get("adresse"))} {e(ent.get("ville"))}<br>'
+    lg = logo_img(conn, 60, "float:left;margin:0 14px 6px 0")
+    return (f'<div class="sm" style="overflow:hidden">{lg}<b>{e(ent.get("raison_sociale") or "Raison sociale à renseigner")}</b> — {e(ent.get("adresse"))} {e(ent.get("ville"))}<br>'
             f'IFU : {e(ent.get("ifu"))} · RCCM : {e(ent.get("rccm"))} · N° employeur CNSS : {e(ent.get("cnss_employeur"))}</div>')
 
 

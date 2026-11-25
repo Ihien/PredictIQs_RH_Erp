@@ -194,6 +194,7 @@ class Req:
         self.user = None
         self.csrf = ""
         self.db = None
+        self.files = {}
 
     def q(self, k, default=""):
         return self.query.get(k, default)
@@ -211,6 +212,56 @@ class Req:
     @property
     def uname(self):
         return self.user["username"] if self.user else "-"
+
+
+def parse_multipart(ctype, body):
+    """Formulaire multipart/form-data -> (champs texte, fichiers {nom: (nom_fichier, octets, type)})."""
+    from email.parser import BytesParser
+    from email import policy
+    msg = BytesParser(policy=policy.HTTP).parsebytes(b"Content-Type: " + ctype.encode("latin-1", "replace") + b"\r\n\r\n" + body)
+    form, files = {}, {}
+    if not msg.is_multipart():
+        return form, files
+    for part in msg.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not name:
+            continue
+        data = part.get_payload(decode=True) or b""
+        fn = part.get_filename()
+        if fn is not None:
+            files[name] = (fn, data, part.get_content_type())
+        else:
+            form[name] = data.decode("utf-8", "replace")
+    return form, files
+
+
+# ------------------------------------------------------------------ logo
+LOGO_MAX = 500_000
+LOGO_TYPES = {b"\x89PNG\r\n\x1a\n": "image/png", b"\xff\xd8\xff": "image/jpeg"}
+
+
+def hashlib_sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def logo_type(data):
+    """Type MIME d'après la signature réelle du fichier (PNG ou JPEG), sinon None."""
+    for magic, mime in LOGO_TYPES.items():
+        if data.startswith(magic):
+            return mime
+    return None
+
+
+def logo_uri(conn):
+    r = conn.execute("SELECT value FROM params WHERE key='logo'").fetchone()
+    return r["value"] if r and r["value"] else ""
+
+
+def logo_img(conn, height=60, style=""):
+    uri = logo_uri(conn)
+    if not uri.startswith(("data:image/png;base64,", "data:image/jpeg;base64,")):
+        return ""
+    return f'<img src="{e(uri)}" alt="Logo" style="max-height:{int(height)}px;max-width:220px;{style}">'
 
 
 ROUTES = []
@@ -318,8 +369,10 @@ def page(req, title, body, wide=False):
     msg = f'<div class="msg">{e(req.q("msg"))}</div>' if req.q("msg") else ""
     err = f'<div class="err">{e(req.q("err"))}</div>' if req.q("err") else ""
     if not req.user:
+        lg = logo_img(req.db, 80) if req.db else ""
+        lg = f'<div style="text-align:center;margin-bottom:10px">{lg}</div>' if lg else ""
         return Resp(f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-                    f'<title>{e(title)} – ERP RH</title><style>{CSS}</style></head><body><div class="login">{msg}{err}{body}</div></body></html>')
+                    f'<title>{e(title)} – ERP RH</title><style>{CSS}</style></head><body><div class="login">{lg}{msg}{err}{body}</div></body></html>')
     ent = get_params(req.db, "entreprise").get("raison_sociale") or "Mon entreprise"
     nav = ""
     for label, href, roles in NAV:
@@ -330,11 +383,16 @@ def page(req, title, body, wide=False):
     return Resp(
         f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{e(title)} – ERP RH</title><style>{CSS}</style></head><body>'
-        f'<div class="side"><h1>ERP RH Burkina</h1><small>{e(ent)}</small>{nav}</div>'
+        f'<div class="side">{side_logo(req.db)}<h1>ERP RH Burkina</h1><small>{e(ent)}</small>{nav}</div>'
         f'<div class="main"><div class="top"><span>{e(req.user["fullname"])} · <span class="tag info">{e(req.role)}</span></span>'
         f'<span><a href="/compte">Mon compte</a> &nbsp; <form class="inline" method="post" action="/logout">{csrf_field(req)}'
         f'<button class="g" style="padding:3px 9px">Déconnexion</button></form></span></div>'
         f'{msg}{err}<h2>{e(title)}</h2>{body}</div></body></html>')
+
+
+def side_logo(conn):
+    lg = logo_img(conn, 56)
+    return f'<div style="background:#fff;margin:0 12px 12px;padding:6px;border-radius:4px;text-align:center">{lg}</div>' if lg else ""
 
 
 def csrf_field(req):
@@ -389,13 +447,20 @@ class Handler(BaseHTTPRequestHandler):
                 n = int(self.headers.get("Content-Length") or 0)
                 if n > 2_000_000:
                     return self.send(Resp("Requête trop volumineuse", 413))
-                form = {k: v[-1] for k, v in parse_qs(self.rfile.read(n).decode("utf-8", "replace"), keep_blank_values=True).items()}
+                raw = self.rfile.read(n)
+                ctype = self.headers.get("Content-Type") or ""
+                if ctype.lower().startswith("multipart/form-data"):
+                    form, files = parse_multipart(ctype, raw)
+                else:
+                    form, files = {k: v[-1] for k, v in parse_qs(raw.decode("utf-8", "replace"), keep_blank_values=True).items()}, {}
             cookies = {}
             for part in (self.headers.get("Cookie") or "").split(";"):
                 if "=" in part:
                     k, v = part.strip().split("=", 1)
                     cookies[k] = v
             req = Req(method, u.path, query, form, cookies, self.client_address[0])
+            if method == "POST":
+                req.files = files
             if method == "POST":
                 with WRITE_LOCK:
                     resp = self.dispatch(req)

@@ -3,7 +3,7 @@
 import json, time, calendar, os, glob
 import datetime as dt
 from .core import (route, page, redirect, Resp, e, d, fr, money, num, audit, audit_verify, csrf_field, table, post_btn, params, get_params, today, now_iso,
-                   hash_pwd, check_pwd, pwd_policy, session_create, cookie_header, backup, ROLES, MOIS, Forbidden, BACKUP_DIR, csv_resp)
+                   hash_pwd, check_pwd, pwd_policy, logo_img, logo_type, LOGO_MAX, hashlib_sha256, session_create, cookie_header, backup, ROLES, MOIS, Forbidden, BACKUP_DIR, csv_resp)
 from . import paie as M
 from .entites import E, fmap, show, emp_name, emp_map, NON_PAYES, MOTIFS_SORTIE
 from .rapports import controles, actifs, contrat_courant, entete
@@ -493,7 +493,7 @@ def bulletin_html(conn, pp, s):
         g += f'<tr><td>Remboursements de frais (hors brut)</td><td></td><td></td><td class="r">{money(b["remboursements"])}</td><td></td></tr>'
     pat = " · ".join(f"{k} {money(v)}" for k, v in b["cnss_pat_detail"].items())
     prov = "" if pp["statut"] == "cloturee" else '<p class="tag important">PROVISOIRE – période non clôturée</p>'
-    return (f'<div class="doc pb"><div class="two"><div><b>{e(ent.get("raison_sociale") or "Employeur à renseigner")}</b><br>{e(ent.get("adresse"))} {e(ent.get("ville"))}<br>'
+    return (f'<div class="doc pb"><div class="two"><div>{logo_img(conn, 55, "display:block;margin-bottom:6px")}<b>{e(ent.get("raison_sociale") or "Employeur à renseigner")}</b><br>{e(ent.get("adresse"))} {e(ent.get("ville"))}<br>'
             f'IFU : {e(ent.get("ifu"))} — N° employeur CNSS : {e(ent.get("cnss_employeur"))}<br>{e(ent.get("convention_collective"))}</div>'
             f'<div><h2 style="text-align:right;margin:0">BULLETIN DE PAIE</h2><p style="text-align:right">Période : <b>{MOIS[pp["mois"]]} {pp["annee"]}</b></p>{prov}</div></div>'
             f'<table><tr><th>Matricule</th><td>{e(em["matricule"])}</td><th>Nom et prénoms</th><td><b>{e(em["nom"])} {e(em["prenoms"])}</b></td></tr>'
@@ -537,7 +537,7 @@ def admin(req):
     integ = f'<span class="tag ok">Journal intègre ({n} écritures vérifiées)</span>' if ok else f'<span class="tag critique">ALTÉRATION DÉTECTÉE à l\'écriture n° {bad}</span>'
     bk = sorted(glob.glob(os.path.join(BACKUP_DIR, "erp_rh_*.db")))
     body = ('<div class="card"><h3 style="margin-top:0">Entreprise et référentiel légal</h3>'
-            '<a class="btn" href="/admin/params/entreprise">Entreprise</a><a class="btn" href="/admin/params/paie">Paramètres de paie (CNSS, IUTS, TPA, SMIG)</a>'
+            '<a class="btn" href="/admin/params/entreprise">Entreprise</a><a class="btn" href="/admin/logo">Logo</a><a class="btn" href="/admin/params/paie">Paramètres de paie (CNSS, IUTS, TPA, SMIG)</a>'
             '<a class="btn" href="/admin/bareme">Barème IUTS</a><a class="btn" href="/admin/params/travail">Droit du travail</a><a class="btn" href="/e/feries">Jours fériés</a>'
             '<p class="muted sm">Aucun taux n\'est codé en dur : mettez ce référentiel à jour à chaque loi de finances, décret SMIG ou texte d\'application du Code du travail.</p></div>'
             '<div class="card"><h3 style="margin-top:0">Sécurité</h3><a class="btn" href="/admin/users">Utilisateurs et profils</a><a class="btn" href="/admin/params/securite">Règles de sécurité</a>'
@@ -574,7 +574,12 @@ def admin_params(req, grp):
         return redirect(f"/admin/params/{grp}", msg=f"{len(diff)} paramètre(s) modifié(s).")
     titres = {"entreprise": "Entreprise", "paie": "Paramètres de paie", "travail": "Référentiel droit du travail", "securite": "Règles de sécurité"}
     tr = "".join(f'<tr><td>{e(r["label"])}</td><td style="width:260px"><input name="p_{r["key"]}" value="{e(r["value"])}"></td><td class="sm muted">{e(r["source"])}</td></tr>' for r in rows)
-    warn = "" if grp in ("entreprise", "securite") else ('<div class="err">Valeurs initiales fournies à titre indicatif. Les lignes marquées « À VÉRIFIER » doivent être confirmées '
+    if grp == "entreprise":
+        lg = logo_img(conn, 50, "vertical-align:middle;margin-right:10px")
+        warn = f'<div class="card">{lg or "Aucun logo."} <a class="btn g" href="/admin/logo">{"Changer le logo" if lg else "Ajouter un logo"}</a></div>'
+    else:
+        warn = ""
+    warn += "" if grp in ("entreprise", "securite") else ('<div class="err">Valeurs initiales fournies à titre indicatif. Les lignes marquées « À VÉRIFIER » doivent être confirmées '
                                                          "auprès de la CNSS, de la DGI ou de l'inspection du travail avant la première paie réelle. Toute modification est tracée.</div>")
     return page(req, titres[grp], f'{warn}<form method="post">{csrf_field(req)}<table><tr><th>Paramètre</th><th>Valeur</th><th>Source</th></tr>{tr}</table><button>Enregistrer</button> '
                                   '<a class="btn g" href="/admin">Retour</a></form>')
@@ -690,3 +695,38 @@ def admin_audit(req):
     body = (f'<p>{integ}</p><form method="get" class="noprint"><input name="q" value="{e(q)}" placeholder="Filtrer…" style="width:240px"> <button class="g">Filtrer</button> '
             f'<a class="btn g" href="/admin/audit?format=csv">Exporter</a></form>' + table(H, data))
     return page(req, "Journal d'audit", body)
+
+
+@route("/admin/logo", methods=("GET", "POST"), roles=("admin",))
+def admin_logo(req):
+    """Logo de l'entreprise : stocké dans la base (donc inclus dans les sauvegardes), PNG ou JPEG uniquement."""
+    import base64
+    conn = req.db
+    if req.method == "POST":
+        if req.f("action") == "supprimer":
+            conn.execute("DELETE FROM params WHERE key='logo'")
+            audit(conn, req.uname, "SUPPRESSION_LOGO", "params", "logo")
+            return redirect("/admin/logo", msg="Logo supprimé.")
+        f = req.files.get("logo")
+        if not f or not f[1]:
+            return redirect("/admin/logo", err="Choisissez un fichier image.")
+        data = f[1]
+        mime = logo_type(data)
+        if not mime:
+            return redirect("/admin/logo", err="Format refusé : seuls les fichiers PNG et JPEG sont acceptés.")
+        if len(data) > LOGO_MAX:
+            return redirect("/admin/logo", err=f"Fichier trop lourd ({len(data) // 1024} Ko) : {LOGO_MAX // 1000} Ko maximum. Réduisez l'image (300 px de large suffisent).")
+        uri = f"data:{mime};base64," + base64.b64encode(data).decode()
+        conn.execute("INSERT INTO params(key,value,label,grp,source,ordre) VALUES('logo',?,'Logo de l''entreprise','logo','',9999) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (uri,))
+        audit(conn, req.uname, "MODIFICATION_LOGO", "params", "logo", {"fichier": f[0][:120], "type": mime, "octets": len(data), "sha256": hashlib_sha256(data)})
+        return redirect("/admin/logo", msg="Logo enregistré.")
+    lg = logo_img(conn, 120)
+    cur = (f'<div class="card"><p><b>Logo actuel :</b></p><div style="padding:10px;border:1px dashed #b9c4cc;display:inline-block">{lg}</div><p>'
+           + post_btn(req, "/admin/logo", "Supprimer le logo", "d", {"action": "supprimer"}) + "</p></div>") if lg else '<div class="card">Aucun logo enregistré.</div>'
+    body = (cur + f'<form method="post" enctype="multipart/form-data" class="card">{csrf_field(req)}'
+            '<label>Nouveau logo (PNG ou JPEG, 500 Ko maximum)</label><input type="file" name="logo" accept="image/png,image/jpeg" required>'
+            '<p class="help">Conseil : un PNG à fond transparent ou blanc, d\'environ 300 px de large. Le logo apparaît dans le menu, sur la page de connexion, '
+            "les bulletins de paie, les attestations et certificats, et tous les états imprimés.</p><button>Enregistrer le logo</button> "
+            '<a class="btn g" href="/admin/params/entreprise">Retour</a></form>')
+    return page(req, "Logo de l'entreprise", body)
